@@ -7,7 +7,7 @@ import torch.optim as optim
 from torch.distributions.normal import Normal
 
 timesteps = 500
-save_model = 1
+save_model = 0
 
 class Policy(nn.Module):
 
@@ -85,7 +85,7 @@ loss1 = nn.MSELoss()
 N_traj = 10
 
 # K iterations of learning
-for k in range(50):
+for k in range(1000):
     # 100 trajectories
 
     print("iteration no: ", k)
