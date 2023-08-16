@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.normal import Normal
 
+timesteps = 500
+save_model = 1
 
 class Policy(nn.Module):
 
@@ -14,7 +16,7 @@ class Policy(nn.Module):
         self.layer1 = nn.Linear(in_features=29, out_features=15)
         self.act1 = nn.ReLU()
         self.layer2 = nn.Linear(in_features=15, out_features=8)
-        self.output = nn.Tanh()
+        # self.output = nn.Tanh()
         # Log standard deviations for each action dimension
         self.log_std = nn.Parameter(torch.zeros(8))
 
@@ -22,7 +24,8 @@ class Policy(nn.Module):
         y = self.layer1(x)
         y = self.act1(y)
         y = self.layer2(y)
-        mean = self.output(y)
+        # mean = self.output(y)
+        mean = y
         std = torch.exp(self.log_std)
         return mean, std
         
@@ -47,6 +50,14 @@ value_nn = Value()
 
 rate_learning = 1e-3
 
+existing = 1
+render = 1
+
+if existing:
+    policy_nn.load_state_dict(torch.load('policy_nn.pth'))
+    value_nn.load_state_dict(torch.load('value_nn.pth'))
+    print("loaded")
+
 optim_pol = optim.Adam(policy_nn.parameters(), lr=rate_learning)
 optim_val = optim.Adam(value_nn.parameters(), lr=rate_learning)
 
@@ -54,13 +65,18 @@ optim_val = optim.Adam(value_nn.parameters(), lr=rate_learning)
 def get_reward(info):
     return -1 * np.linalg.norm(np.array([10, 0]) - np.array([info['x_position'], info['y_position']]))
 
+env = gym.make('Ant-v4')
 
-env = gym.make('Ant-v4', render_mode="human")
-# env = gym.make('Ant-v4')
+if render:
+    env = gym.make('Ant-v4', render_mode="human")
+
 observation, info = env.reset()
-env.render()
+
+if render:
+    env.render()
+# env.render()
 viewer = None
-# viewer = env.env.env.env.mujoco_renderer.viewer
+viewer = env.env.env.env.mujoco_renderer.viewer
 
 line_start = np.array([0, 0, 0])
 line_end = np.array([10, 0, 0])
@@ -69,8 +85,10 @@ loss1 = nn.MSELoss()
 N_traj = 10
 
 # K iterations of learning
-for k in range(1):
+for k in range(50):
     # 100 trajectories
+
+    print("iteration no: ", k)
 
     states = []
     returns = []
@@ -79,48 +97,44 @@ for k in range(1):
     rewards_tr = []
     states_tr = []
 
-    # Calculating returns for all timesteps (1000) in 100 trajectories
-    returns = np.zeros([N_traj, 1000])
-    rewards = np.zeros([N_traj, 1000])
-    states = np.zeros([N_traj, 1000, 29])
-    actions = np.zeros([N_traj, 1000, 8])
-    advantages = np.zeros([N_traj, 1000])
-    values = np.zeros([N_traj, 1000])
-    actions_log = np.zeros([N_traj, 1000])
+    # Calculating returns for all timesteps (timesteps) in 100 trajectories
+    returns = np.zeros([N_traj, timesteps])
+    rewards = np.zeros([N_traj, timesteps])
+    states = np.zeros([N_traj, timesteps, 29])
+    actions = np.zeros([N_traj, timesteps, 8])
+    advantages = np.zeros([N_traj, timesteps])
+    values = np.zeros([N_traj, timesteps])
+    actions_log = np.zeros([N_traj, timesteps])
 
     accumulated_gradients = [torch.zeros_like(param) for param in policy_nn.parameters()]
 
 
     for traj in range(N_traj):
-        # 1000 timesteps
+        # timesteps timesteps
         observation, info = env.reset()
 
-        print("Traj is: ", traj)
-        for t in range(1000):
-
-            print(t)
+        # print("Traj is: ", traj)
+        for t in range(timesteps):
 
             if t == 0:
                 observation = np.append(observation, np.array([0, 0]))
             else:
-                print(info)
-                print(info['x_position'])
-
-                observation = np.append(observation, np.array([info['x_position'], info['y_position']]))
+                observation = np.append(observation, position)
 
             states[traj, t] = observation
-
             action_mean, action_std = policy_nn(torch.from_numpy(observation).float())
             action_dist = Normal(action_mean, action_std)
             action = action_dist.sample()
+            action = torch.tanh(action)
             action_log = action_dist.log_prob(action)
             # action = action.detach().numpy()
             value_i = value_nn(torch.from_numpy(observation).float())
             value_i = value_i.detach().numpy()
             
             action = action.detach().numpy()
-
             observation, reward, terminated, truncated, info = env.step(action)
+            position = np.array([info['x_position'], info['y_position']])
+
             reward = get_reward(info)
 
             advantage = reward - value_i
@@ -164,7 +178,7 @@ for k in range(1):
     ## Now improving the policy:
 
     for traj in range(N_traj):
-        for t in range(1000):
+        for t in range(timesteps):
 
             loss_t = -(actions_log[traj, t])*returns[traj, t]
 
@@ -179,31 +193,14 @@ for k in range(1):
 
 
     for acc_grad in accumulated_gradients:
-        acc_grad /= (N_traj * 1000)
+        acc_grad /= (N_traj * timesteps)
 
     for param, acc_grad in zip(policy_nn.parameters(), accumulated_gradients):
         param.data -= rate_learning * acc_grad
 
-    # gradients = None
+if save_model:
+    torch.save(policy_nn.state_dict(), 'policy_nn.pth')
+    torch.save(value_nn.state_dict(), 'value_nn.pth')
     
-    # for traj in range(N_traj):
-    #     grad_val = -1 * np.multiply(actions_log[traj], advantages[traj])
-    #     grad_val_tensor = torch.tensor(grad_val, dtype=torch.float32, requires_grad=True)
-    #     grad_val_tensor.backkward()
-    #     if gradients is not None:
-    #         gradients += [param.grad for param in policy_nn.parameters()]
-    #     else:
-    #         gradients = [param.grad for param in policy_nn.parameters()]
-        
-    # gradients = gradients/N_traj
-
-
-
-    
-
-    # grad_val.backward()
-
-    # grad_val = np.multiply(actions_log, advantages)
-    # print(len(grad_val))
 
 env.close() 
