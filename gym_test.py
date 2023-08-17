@@ -48,9 +48,9 @@ class Value(nn.Module):
 policy_nn = Policy()
 value_nn = Value()
 
-rate_learning = 1e-3
+rate_learning = 5e-3
 
-existing = 0
+existing = 1
 render = 0
 
 if existing:
@@ -86,7 +86,7 @@ loss1 = nn.MSELoss()
 N_traj = 10
 
 # K iterations of learning
-for k in range(100):
+for k in range(500):
     # 100 trajectories
 
     print("iteration no: ", k)
@@ -133,10 +133,7 @@ for k in range(100):
             action = action_dist.sample()
             action_log = action_dist.log_prob(action)
             
-            action_log_loss = action_log_loss + action_log.sum()
             action_log_list.append(action_log.sum())
-            actions_log[traj, t] = action_log.sum()
-            # print("actions: ", actions_log[traj, t])
             action = torch.tanh(action)
             # action = action.detach().numpy()
             value_i = value_nn(torch.from_numpy(observation).float())
@@ -195,16 +192,9 @@ for k in range(100):
     loss.backward()
     optim_val.step()
 
-    for name, param in value_nn.named_parameters():
-        if param.grad is not None:
-            print(name, "gradient:", param.grad)
-
-
-    total_loss = 0
-    for traj in range(N_traj):
-        for t in range(timesteps):
-            # print(actions_log[traj, t])
-            total_loss = total_loss + actions_log[traj, t]
+    # for name, param in value_nn.named_parameters():
+    #     if param.grad is not None:
+            # print(name, "Value gradient:", param.grad)
 
     action_log_tensor_papi = torch.stack(action_log_list)
     weighted_action_log_tensor = action_log_tensor_papi * advantages_normal
@@ -215,8 +205,18 @@ for k in range(100):
 
     total_loss.backward()
 
+    for name, param in policy_nn.named_parameters():
+        print(name, param.data)
+
+    # for name, param in policy_nn.named_parameters():
+    #     if param.grad is not None:
+    #         print(name, "Policy gradient:", param.grad)
+
     # Update parameters
     optim_pol.step()
+
+    for name, param in policy_nn.named_parameters():
+        print(name, param.data)
 
 if save_model:
     torch.save(policy_nn.state_dict(), 'policy_nn.pth')
