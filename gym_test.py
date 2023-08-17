@@ -109,6 +109,11 @@ for k in range(100):
 
     accumulated_gradients = [torch.zeros_like(param) for param in policy_nn.parameters()]
 
+    action_log_loss = 0
+    action_log_list = []
+
+    action_list = []
+    value_list = []
 
     for traj in range(N_traj):
         # timesteps timesteps
@@ -127,10 +132,15 @@ for k in range(100):
             action_dist = Normal(action_mean, action_std)
             action = action_dist.sample()
             action_log = action_dist.log_prob(action)
+            
+            action_log_loss = action_log_loss + action_log.sum()
+            action_log_list.append(action_log.sum())
+            actions_log[traj, t] = action_log.sum()
+            # print("actions: ", actions_log[traj, t])
             action = torch.tanh(action)
             # action = action.detach().numpy()
             value_i = value_nn(torch.from_numpy(observation).float())
-            value_i = value_i.detach().numpy()
+            value_list.append(value_i)
             
             action = action.detach().numpy()
             observation, reward, terminated, truncated, info = env.step(action)
@@ -159,66 +169,54 @@ for k in range(100):
             return_i = np.cumsum(reward)
             returns[i] = np.flip(return_i)
 
-    # Ran through all the trajectories and collected data
 
     # Keep values as a tensor with gradient tracking enabled
     values_tensor = torch.tensor(values, dtype=torch.float32, requires_grad=True)
-    rewards_tensor = torch.tensor(rewards, dtype=torch.float32)
+    rewards_tensor = torch.tensor(rewards, dtype=torch.float32, requires_grad=True)
     advantages_tensor = torch.tensor(advantages, dtype=torch.float32, requires_grad=True)
     actions_log_tensor = torch.tensor(actions_log, dtype=torch.float32, requires_grad=True)
 
     # Flatten the tensors
+    advantages_flatten = (torch.tensor(returns) - torch.tensor(values)).view(-1)
+
+    mean = torch.mean(advantages_flatten)
+    std = torch.std(advantages_flatten)
+
+    advantages_normal = (advantages_flatten - mean) / std
+
+        # Flatten the tensors
     values_flatten = values_tensor.view(-1)
     rewards_flatten = rewards_tensor.view(-1)
 
-    loss = loss1(values_flatten, rewards_flatten)
+    values_ten = torch.stack(value_list)
+    loss = loss1(values_ten, rewards_flatten)
 
     optim_val.zero_grad()
     loss.backward()
     optim_val.step()
 
-    # Initialize total policy loss
-    total_policy_loss = torch.tensor(0.0, dtype=torch.float32)
-
-    for traj in range(N_traj):
-        for t in range(timesteps):
-            # loss_t = -(actions_log[traj, t])*(returns[traj, t] - values[traj, t])
-            loss_t = -actions_log_tensor[traj, t] * (returns[traj, t] - values[traj, t])
-            # Convert loss_t to a tensor with requires_grad=True
-            total_policy_loss += loss_t
-            
-
-    optim_pol.zero_grad()
-    total_policy_loss.backward()
-
-    # Print gradients for debugging
-    for name, param in policy_nn.named_parameters():
+    for name, param in value_nn.named_parameters():
         if param.grad is not None:
             print(name, "gradient:", param.grad)
 
+
+    total_loss = 0
+    for traj in range(N_traj):
+        for t in range(timesteps):
+            # print(actions_log[traj, t])
+            total_loss = total_loss + actions_log[traj, t]
+
+    action_log_tensor_papi = torch.stack(action_log_list)
+    weighted_action_log_tensor = action_log_tensor_papi * advantages_normal
+    total_loss = weighted_action_log_tensor.sum()
+
+    # Compute gradients
+    optim_pol.zero_grad()
+
+    total_loss.backward()
+
+    # Update parameters
     optim_pol.step()
-
-    print("Policy Loss:", total_policy_loss.item())
-    for name, param in policy_nn.named_parameters():
-        print(name, param.data)
-
-    # for acc_grad in accumulated_gradients:
-    #     acc_grad /= (N_traj)
-
-    # for param, acc_grad in zip(policy_nn.parameters(), accumulated_gradients):
-    #     # print("Gradient is: ", acc_grad)
-    #     param.data -= rate_learning * acc_grad
-
-    # print("Policy Parameters are: \n")
-
-    # for name, param in policy_nn.named_parameters():
-    #     print(name, param.data)
-
-    # print("Value Parameters are: \n")
-
-    # for name, param in value_nn.named_parameters():
-    #     print(name, param.data)
-
 
 if save_model:
     torch.save(policy_nn.state_dict(), 'policy_nn.pth')
