@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.normal import Normal
 
-timesteps = 100
+timesteps = 200
 save_model = 1
 
 class Policy(nn.Module):
@@ -51,7 +51,7 @@ value_nn = Value()
 rate_learning = 5e-3
 
 existing = 1
-render = 0
+render = 1
 
 if existing:
     policy_nn.load_state_dict(torch.load('policy_nn.pth'))
@@ -205,8 +205,8 @@ for k in range(500):
 
     total_loss.backward()
 
-    for name, param in policy_nn.named_parameters():
-        print(name, param.data)
+    # for name, param in policy_nn.named_parameters():
+    #     print(name, param.data)
 
     # for name, param in policy_nn.named_parameters():
     #     if param.grad is not None:
@@ -215,8 +215,8 @@ for k in range(500):
     # Update parameters
     optim_pol.step()
 
-    for name, param in policy_nn.named_parameters():
-        print(name, param.data)
+    # for name, param in policy_nn.named_parameters():
+    #     print(name, param.data)
 
 if save_model:
     torch.save(policy_nn.state_dict(), 'policy_nn.pth')
