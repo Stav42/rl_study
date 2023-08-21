@@ -6,28 +6,41 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.normal import Normal
 
-timesteps = 200
+timesteps = 500
 save_model = 1
 
 class Policy(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.layer1 = nn.Linear(in_features=29, out_features=15)
-        self.act1 = nn.ReLU()
-        self.layer2 = nn.Linear(in_features=15, out_features=8)
-        # self.output = nn.Tanh()
-        # Log standard deviations for each action dimension
-        self.log_std = nn.Parameter(torch.zeros(8))
+
+        # Shared Network for both mean and standard deviation
+        self.shared_net = nn.Sequential(
+            nn.Linear(in_features=29, out_features=20),
+            nn.Tanh(),
+            nn.Linear(in_features=20, out_features=15),
+            nn.Tanh(),
+        )
+
+        # Policy Mean specific layer
+        self.policy_mean_net = nn.Sequential(
+            nn.Linear(in_features=15, out_features=8)
+        )
+
+        # Policy Mean specific layer
+        self.policy_stddev_net = nn.Sequential(
+            nn.Linear(in_features=15, out_features=8)
+        )
 
     def forward(self, x):
-        y = self.layer1(x)
-        y = self.act1(y)
-        y = self.layer2(y)
-        # mean = self.output(y)
-        mean = y
-        std = torch.exp(self.log_std)
-        return mean, std
+        shared_features = self.shared_net(x.float())
+
+        action_means = self.policy_mean_net(shared_features)
+        action_stddevs = torch.log(
+            1 + torch.exp(self.policy_stddev_net(shared_features))
+        )
+
+        return action_means, action_stddevs
         
 class Value(nn.Module):
 
@@ -48,7 +61,7 @@ class Value(nn.Module):
 policy_nn = Policy()
 value_nn = Value()
 
-rate_learning = 5e-3
+rate_learning = 1e-4
 
 existing = 1
 render = 1
@@ -86,7 +99,7 @@ loss1 = nn.MSELoss()
 N_traj = 10
 
 # K iterations of learning
-for k in range(500):
+for k in range(200):
     # 100 trajectories
 
     print("iteration no: ", k)
@@ -133,8 +146,8 @@ for k in range(500):
             action = action_dist.sample()
             action_log = action_dist.log_prob(action)
             
-            action_log_list.append(action_log.sum())
-            action = torch.tanh(action)
+            action_log_list.append(action_log.mean())
+            # action = torch.tanh(action)
             # action = action.detach().numpy()
             value_i = value_nn(torch.from_numpy(observation).float())
             value_list.append(value_i)
@@ -172,7 +185,15 @@ for k in range(500):
     rewards_tensor = torch.tensor(rewards, dtype=torch.float32, requires_grad=True)
     advantages_tensor = torch.tensor(advantages, dtype=torch.float32, requires_grad=True)
     actions_log_tensor = torch.tensor(actions_log, dtype=torch.float32, requires_grad=True)
+    returns_tensor = torch.tensor(returns, dtype=torch.float32, requires_grad=True)
 
+    # print(returns_tensor.size())
+    # print(rewards_tensor.size())
+    # print(values_tensor.size())
+
+    # print(rewards_tensor[0])
+    # print(returns_tensor[0])
+    
     # Flatten the tensors
     advantages_flatten = (torch.tensor(returns) - torch.tensor(values)).view(-1)
 
@@ -184,21 +205,35 @@ for k in range(500):
         # Flatten the tensors
     values_flatten = values_tensor.view(-1)
     rewards_flatten = rewards_tensor.view(-1)
+    returns_flatten = returns_tensor.view(-1)
 
     values_ten = torch.stack(value_list)
-    loss = loss1(values_ten, rewards_flatten)
+    loss = loss1(values_ten, returns_flatten)
 
     optim_val.zero_grad()
     loss.backward()
     optim_val.step()
-
     # for name, param in value_nn.named_parameters():
     #     if param.grad is not None:
             # print(name, "Value gradient:", param.grad)
+    length = list(advantages_normal.size())[0]
+    discount = torch.zeros([length])
+
+    for i in range(length):
+        if i == 0:
+            discount[i] = 1
+        else:
+            discount[i] = discount[i-1] * 0.95
+        
 
     action_log_tensor_papi = torch.stack(action_log_list)
     weighted_action_log_tensor = action_log_tensor_papi * advantages_normal
-    total_loss = weighted_action_log_tensor.sum()
+    discounted_w_action_log_tensor = weighted_action_log_tensor * discount
+    # print(weighted_action_log_tensor.size())
+    total_loss = -1 * weighted_action_log_tensor.sum()
+
+    # print(action_log_tensor_papi.size())
+    # print(advantages_normal.size())
 
     # Compute gradients
     optim_pol.zero_grad()
