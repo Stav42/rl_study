@@ -107,7 +107,7 @@ class REINFORCE:
         self.rewards = []  # Stores the corresponding rewards
 
         self.net = Policy_Network(obs_space_dims, action_space_dims)
-        existing = 0
+        existing = 1
         if existing:
             self.net.load_state_dict(torch.load('hopper.pth'))
         self.optimizer = torch.optim.AdamW(self.net.parameters(), lr=self.learning_rate)
@@ -185,8 +185,8 @@ class REINFORCE:
 
 
 # Create and wrap the environment
-# env = gym.make("Hopper-v4", render_mode="human")
-env = gym.make("Hopper-v4")
+env = gym.make("Hopper-v4", render_mode="human")
+# env = gym.make("Hoppers-v4")
 
 wrapped_env = gym.wrappers.RecordEpisodeStatistics(env, 50)  # Records episode-reward
 
