@@ -48,23 +48,7 @@ class Action_Policy(nn.Module):
 
         return action_means, action_stddevs
     
-class Value(nn.Module):
-
-    def __init__(self):
-        super().__init__()
-        self.layer1 = nn.Linear(in_features=29, out_features=15)
-        self.act1 = nn.ReLU()
-        self.layer2 = nn.Linear(in_features=15, out_features=1)
-
-
-    def forward(self, x):
-        y = self.layer1(x)
-        y = self.act1(y)
-        y = self.layer2(y)
-        # y = self.output(y)
-        return y
-    
-class VANILLA_GRADIENT:
+class REINFORCE:
 
     def __init__(self, obs_space_dims: int, action_space_dims: int):
 
@@ -79,11 +63,9 @@ class VANILLA_GRADIENT:
         self.values = []
 
         self.policy_net = Action_Policy(obs_space_dims, action_space_dims)
-        self.value_net = Value()
         if existing:
             self.policy_net.load_state_dict(torch.load('nn_policy.pth'))
         self.pol_optimizer = torch.optim.AdamW(self.policy_net.parameters(), lr=self.learning_rate)
-        self.val_optimizer = torch.optim.AdamW(self.value_net.parameters(), lr=self.learning_rate)
 
     def sample_action(self, state: np.ndarray) -> float:
 
@@ -112,7 +94,7 @@ class VANILLA_GRADIENT:
             running_reward = R + self.gamma * running_reward
             returns.insert(0, running_reward)
 
-        deltas = torch.tensor(returns) - torch.tensor(self.values)
+        deltas = torch.tensor(returns)
 
         self.returns_val = returns
 
@@ -127,17 +109,12 @@ class VANILLA_GRADIENT:
         pol_loss.backward()
         self.pol_optimizer.step()
 
-        ###### OPTIMIZE VALUE ########################
+        # for name, param in self.policy_net.named_parameters():
+            # if param.grad is not None:
+            #     print(name, "Policy gradient:", param.grad)
 
-        self.val_optimizer.zero_grad()
-        val_loss = mse_loss(torch.tensor(self.values, requires_grad = True, dtype=torch.float32), torch.tensor(self.returns_val, dtype=torch.float32))
-        val_loss.backward()
-        self.val_optimizer.step()
-
-        self.returns_val = []
         self.probs = []
         self.rewards = []
-        self.values = []
 
 render = 0
 
@@ -167,7 +144,7 @@ for seed in [1, 2, 3, 5, 8]:
     np.random.seed(seed)
 
     # Reinitialize agent every seed
-    agent = VANILLA_GRADIENT(obs_space_dims, action_space_dims)
+    agent = REINFORCE(obs_space_dims, action_space_dims)
     reward_over_episodes = []
 
     for episode in range(total_num_episodes):
@@ -182,12 +159,15 @@ for seed in [1, 2, 3, 5, 8]:
             if ok:
                 obs = np.append(obs, position)
             action = agent.sample_action(obs)
-            value_gen = agent.value_net(torch.tensor(obs).float())
-            agent.values.append(value_gen)
+
             obs, reward, terminated, truncated, info = wrapped_env.step(action)
             # reward = get_reward(info)
             # print(info)
+            # print("Distance reward: ", reward)
+            # print("Survival reward: ", info['reward_survive'], info['reward_ctrl'])
             # reward = info['reward_survive'] + info['reward_ctrl'] + reward
+            
+
             agent.rewards.append(reward)
             position = np.array([info['x_position'], info['y_position']])
             ok = 1
@@ -202,6 +182,7 @@ for seed in [1, 2, 3, 5, 8]:
             print("Episode:", episode, "Average Reward:", avg_reward)
 
     rewards_over_seeds.append(reward_over_episodes)
+
 
 rewards_to_plot = [[reward[0] for reward in rewards] for rewards in rewards_over_seeds]
 df1 = pd.DataFrame(rewards_to_plot).melt()
