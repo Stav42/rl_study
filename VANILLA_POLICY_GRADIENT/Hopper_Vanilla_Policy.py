@@ -99,8 +99,8 @@ class VANILLA_POLICY_GRADIENT:
         self.val_net = Value_Network(obs_space_dims)
         existing = 0
         if existing:
-            self.pol_net.load_state_dict(torch.load('hopper_VPGpol_setpoint.pth'))
-            self.val_net.load_state_dict(torch.load('hopper_VPGval_setpoint.pth'))
+            self.pol_net.load_state_dict(torch.load('hopper_VPGpol_setpt_rew20.pth'))
+            self.val_net.load_state_dict(torch.load('hopper_VPGval_setpt_rew20.pth'))
         self.pol_optimizer = torch.optim.AdamW(self.pol_net.parameters(), lr=self.learning_rate)
         self.val_optimizer = torch.optim.AdamW(self.val_net.parameters(), lr=self.learning_rate)
 
@@ -196,8 +196,8 @@ def get_return(reward):
 
     return gs
 
-def get_reward(info):
-    return -1 * (info['x_position'] + 10)
+def get_reward(info, obs):
+    return -20 * (info['x_position'] + 5) + 10 * obs[0]
 
 for seed in [1, 2, 3, 5, 8]:  # Fibonacci seeds
     # set seed
@@ -235,11 +235,11 @@ for seed in [1, 2, 3, 5, 8]:  # Fibonacci seeds
             # if the episode is terminated, if the episode is truncated and
             # additional info from the step
             obs, reward, terminated, truncated, info = wrapped_env.step(action)
-            reward = get_reward(info)
+            reward = get_reward(info, obs)
             # print(reward) 
             agent.rewards.append(reward)
 
-            # print(info)
+            # print(obs)
             # End the episode when either truncated or terminated is true
             #  - truncated: The episode duration reaches max number of timesteps
             #  - terminated: Any of the state space values is no longer finite.
@@ -266,8 +266,8 @@ for seed in [1, 2, 3, 5, 8]:  # Fibonacci seeds
     rewards_over_seeds.append(reward_over_episodes)
     timestep_over_seeds.append(timestep_count)
 
-    torch.save(agent.pol_net.state_dict(), 'hopper_VPGpol_setpoint.pth')
-    torch.save(agent.val_net.state_dict(), 'hopper_VPGval_setpoint.pth')
+    torch.save(agent.pol_net.state_dict(), 'hopper_VPGpol_setpt_rew20.pth')
+    torch.save(agent.val_net.state_dict(), 'hopper_VPGval_setpt_rew20.pth')
 
 
 
