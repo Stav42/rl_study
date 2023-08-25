@@ -15,19 +15,7 @@ import gymnasium as gym
 
 plt.rcParams["figure.figsize"] = (10, 5)
 
-
-# %%
-# Policy Network
-# ~~~~~~~~~~~~~~
-#
-# .. image:: /_static/img/tutorials/reinforce_invpend_gym_v26_fig2.png
-#
-# We start by building a policy that the agent will learn using REINFORCE.
-# A policy is a mapping from the current environment observation to a probability distribution of the actions to be taken.
-# The policy used in the tutorial is parameterized by a neural network. It consists of 2 linear layers that are shared between both the predicted mean and standard deviation.
-# Further, the single individual linear layers are used to estimate the mean and the standard deviation. ``nn.Tanh`` is used as a non-linearity between the hidden layers.
-# The following function estimates a mean and standard deviation of a normal distribution from which an action is sampled. Hence it is expected for the policy to learn
-# appropriate weights to output means and standard deviation based on the current observation.
+mse_loss = nn.MSELoss()
 
 
 class Policy_Network(nn.Module):
@@ -65,16 +53,7 @@ class Policy_Network(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Conditioned on the observation, returns the mean and standard deviation
-         of a normal distribution from which an action is sampled from.
 
-        Args:
-            x: Observation from the environment
-
-        Returns:
-            action_means: predicted mean of the normal distribution
-            action_stddevs: predicted standard deviation of the normal distribution
-        """
         shared_features = self.shared_net(x.float())
 
         action_means = self.policy_mean_net(shared_features)
@@ -83,20 +62,28 @@ class Policy_Network(nn.Module):
         )
 
         return action_means, action_stddevs
+    
+class Value_Network(nn.Module):
+
+    def __init__(self, obs_space_dims: int):
+        super().__init__()
+        self.layer1 = nn.Linear(in_features=obs_space_dims, out_features=15)
+        self.act1 = nn.ReLU()
+        self.layer2 = nn.Linear(in_features=15, out_features=1)
 
 
+    def forward(self, x):
 
-class REINFORCE:
-    """REINFORCE algorithm."""
+        y = self.layer1(x)
+        y = self.act1(y)
+        y = self.layer2(y)
+
+        return y
+
+
+class VANILLA_POLICY_GRADIENT:
 
     def __init__(self, obs_space_dims: int, action_space_dims: int):
-        """Initializes an agent that learns a policy via REINFORCE algorithm [1]
-        to solve the task at hand (Inverted Pendulum v4).
-
-        Args:
-            obs_space_dims: Dimension of the observation space
-            action_space_dims: Dimension of the action space
-        """
 
         # Hyperparameters
         self.learning_rate = 1e-4  # Learning rate for policy optimization
@@ -105,24 +92,22 @@ class REINFORCE:
 
         self.probs = []  # Stores probability values of the sampled action
         self.rewards = []  # Stores the corresponding rewards
+        self.values = []
+        self.returns = []
 
-        self.net = Policy_Network(obs_space_dims, action_space_dims)
-        existing = 1
+        self.pol_net = Policy_Network(obs_space_dims, action_space_dims)
+        self.val_net = Value_Network(obs_space_dims)
+        existing = 0
         if existing:
-            self.net.load_state_dict(torch.load('hopper.pth'))
-        self.optimizer = torch.optim.AdamW(self.net.parameters(), lr=self.learning_rate)
+            self.pol_net.load_state_dict(torch.load('hopper_VPGpol_setpoint.pth'))
+            self.val_net.load_state_dict(torch.load('hopper_VPGval_setpoint.pth'))
+        self.pol_optimizer = torch.optim.AdamW(self.pol_net.parameters(), lr=self.learning_rate)
+        self.val_optimizer = torch.optim.AdamW(self.val_net.parameters(), lr=self.learning_rate)
 
     def sample_action(self, state: np.ndarray) -> float:
-        """Returns an action, conditioned on the policy and observation.
 
-        Args:
-            state: Observation from the environment
-
-        Returns:
-            action: Action to be performed
-        """
         state = torch.tensor(np.array([state]))
-        action_means, action_stddevs = self.net(state)
+        action_means, action_stddevs = self.pol_net(state)
 
         # create a normal distribution from the predicted
         #   mean and standard deviation and sample an action
@@ -146,26 +131,46 @@ class REINFORCE:
             running_g = R + self.gamma * running_g
             gs.insert(0, running_g)
 
-        deltas = torch.tensor(gs)
+        deltas = torch.tensor(gs) - torch.tensor(self.values)
 
         loss = 0
         # minimize -1 * prob * reward obtained
         for log_prob, delta in zip(self.probs, deltas):
             loss += log_prob.mean() * delta * (-1)
 
+        val_loss = 0
+        for val, ret in zip(self.values, self.returns):
+            val_loss+= (val - ret)**2
+
         # Update the policy network
-        self.optimizer.zero_grad()
+        self.pol_optimizer.zero_grad()
         loss.backward()
-        self.optimizer.step()
+        self.pol_optimizer.step()
+
+        # for name, param in self.pol_net.named_parameters():
+        #     if param.grad is not None:
+        #         print(name, "Policy gradient:", param.grad)
+
+        # Update the Value Network
+        self.val_optimizer.zero_grad()
+        val_loss.backward()
+        self.val_optimizer.step()
+
+        # for name, param in self.val_net.named_parameters():
+        #     if param.grad is not None:
+        #         print(name, "Value gradient:", param.grad)
 
         # Empty / zero out all episode-centric/related variables
         self.probs = []
         self.rewards = []
+        self.returns = []
+        self.values = []
+
 
 
 # Create and wrap the environment
-env = gym.make("Hopper-v4", render_mode="human")
-# env = gym.make("Hoppers-v4")
+# env = gym.make("Hopper-v4", render_mode="human", exclude_current_positions_from_observation=False, forward_reward_weight=0)
+env = gym.make("Hopper-v4", exclude_current_positions_from_observation=False, forward_reward_weight = 0)
 
 wrapped_env = gym.wrappers.RecordEpisodeStatistics(env, 50)  # Records episode-reward
 
@@ -180,6 +185,20 @@ timestep_over_seeds = []
 forward_vel_over_seed = []
 x_over_seed = []
 
+def get_return(reward):
+    running_g = 0
+    gs = []
+
+    # Discounted return (backwards) - [::-1] will return an array in reverse
+    for R in reward[::-1]:
+        running_g = R + 0.97 * running_g
+        gs.insert(0, running_g)
+
+    return gs
+
+def get_reward(info):
+    return -1 * (info['x_position'] + 10)
+
 for seed in [1, 2, 3, 5, 8]:  # Fibonacci seeds
     # set seed
     torch.manual_seed(seed)
@@ -187,9 +206,9 @@ for seed in [1, 2, 3, 5, 8]:  # Fibonacci seeds
     np.random.seed(seed)
 
     # Reinitialize agent every seed
-    agent = REINFORCE(obs_space_dims, action_space_dims)
+    agent = VANILLA_POLICY_GRADIENT(obs_space_dims, action_space_dims)
     reward_over_episodes = []
-    timesteps = 400
+    timesteps = 600
     timestep_count = []
 
     forward_vel = []
@@ -205,7 +224,10 @@ for seed in [1, 2, 3, 5, 8]:  # Fibonacci seeds
         count = 0
         for t in range(timesteps):
             action = agent.sample_action(obs)
+            value = agent.val_net(torch.tensor(np.array([obs]), dtype=torch.float32))
             count+=1
+
+            agent.values.append(value)
             # print("Timesteps: ", t)
 
             # Step return type - `tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]`
@@ -213,30 +235,39 @@ for seed in [1, 2, 3, 5, 8]:  # Fibonacci seeds
             # if the episode is terminated, if the episode is truncated and
             # additional info from the step
             obs, reward, terminated, truncated, info = wrapped_env.step(action)
+            reward = get_reward(info)
+            # print(reward) 
             agent.rewards.append(reward)
 
+            # print(info)
             # End the episode when either truncated or terminated is true
             #  - truncated: The episode duration reaches max number of timesteps
             #  - terminated: Any of the state space values is no longer finite.
             # done = terminated or truncated
             done = truncated
 
-        reward_over_episodes.append(wrapped_env.return_queue[-1])
+        returns = get_return(agent.rewards)
+        ## Check 1 (Flipped?):
+        # print("Returns: ", returns)
+        agent.returns = returns
+
+        reward_over_episodes.append(returns)
         agent.update()
 
         if episode % 100 == 0:
-            avg_reward = float(np.mean(wrapped_env.return_queue))
+            avg_reward = float(np.mean(np.array(returns)))
             print("Episode:", episode, "Average Reward:", avg_reward)
-            print("max return", np.max(wrapped_env.return_queue))
-            print("min return", np.min(wrapped_env.return_queue))
-            print("std dev of return: ", np.var(wrapped_env.return_queue))
+            print("max return", np.max(np.array(returns)))
+            print("min return", np.min(np.array(returns)))
+            print("std dev of return: ", np.var(np.array(returns)))
 
         timestep_count.append(count)
 
     rewards_over_seeds.append(reward_over_episodes)
     timestep_over_seeds.append(timestep_count)
 
-    torch.save(agent.net.state_dict(), 'hopper.pth')
+    torch.save(agent.pol_net.state_dict(), 'hopper_VPGpol_setpoint.pth')
+    torch.save(agent.val_net.state_dict(), 'hopper_VPGval_setpoint.pth')
 
 
 

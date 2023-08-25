@@ -16,20 +16,6 @@ import gymnasium as gym
 plt.rcParams["figure.figsize"] = (10, 5)
 
 
-# %%
-# Policy Network
-# ~~~~~~~~~~~~~~
-#
-# .. image:: /_static/img/tutorials/reinforce_invpend_gym_v26_fig2.png
-#
-# We start by building a policy that the agent will learn using REINFORCE.
-# A policy is a mapping from the current environment observation to a probability distribution of the actions to be taken.
-# The policy used in the tutorial is parameterized by a neural network. It consists of 2 linear layers that are shared between both the predicted mean and standard deviation.
-# Further, the single individual linear layers are used to estimate the mean and the standard deviation. ``nn.Tanh`` is used as a non-linearity between the hidden layers.
-# The following function estimates a mean and standard deviation of a normal distribution from which an action is sampled. Hence it is expected for the policy to learn
-# appropriate weights to output means and standard deviation based on the current observation.
-
-
 class Policy_Network(nn.Module):
     """Parametrized Policy Network."""
 
@@ -65,16 +51,7 @@ class Policy_Network(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Conditioned on the observation, returns the mean and standard deviation
-         of a normal distribution from which an action is sampled from.
 
-        Args:
-            x: Observation from the environment
-
-        Returns:
-            action_means: predicted mean of the normal distribution
-            action_stddevs: predicted standard deviation of the normal distribution
-        """
         shared_features = self.shared_net(x.float())
 
         action_means = self.policy_mean_net(shared_features)
@@ -87,16 +64,8 @@ class Policy_Network(nn.Module):
 
 
 class REINFORCE:
-    """REINFORCE algorithm."""
 
     def __init__(self, obs_space_dims: int, action_space_dims: int):
-        """Initializes an agent that learns a policy via REINFORCE algorithm [1]
-        to solve the task at hand (Inverted Pendulum v4).
-
-        Args:
-            obs_space_dims: Dimension of the observation space
-            action_space_dims: Dimension of the action space
-        """
 
         # Hyperparameters
         self.learning_rate = 1e-4  # Learning rate for policy optimization
@@ -109,18 +78,11 @@ class REINFORCE:
         self.net = Policy_Network(obs_space_dims, action_space_dims)
         existing = 1
         if existing:
-            self.net.load_state_dict(torch.load('hopper.pth'))
+            self.net.load_state_dict(torch.load('hopper_setpoint.pth'))
         self.optimizer = torch.optim.AdamW(self.net.parameters(), lr=self.learning_rate)
 
     def sample_action(self, state: np.ndarray) -> float:
-        """Returns an action, conditioned on the policy and observation.
 
-        Args:
-            state: Observation from the environment
-
-        Returns:
-            action: Action to be performed
-        """
         state = torch.tensor(np.array([state]))
         action_means, action_stddevs = self.net(state)
 
@@ -164,8 +126,8 @@ class REINFORCE:
 
 
 # Create and wrap the environment
-env = gym.make("Hopper-v4", render_mode="human")
-# env = gym.make("Hoppers-v4")
+env = gym.make("Hopper-v4", render_mode="human", exclude_current_positions_from_observation=False)
+# env = gym.make("Hopper-v4", exclude_current_positions_from_observation=False, forward_reward_weight = 0)
 
 wrapped_env = gym.wrappers.RecordEpisodeStatistics(env, 50)  # Records episode-reward
 
@@ -179,6 +141,20 @@ timestep_over_seeds = []
 
 forward_vel_over_seed = []
 x_over_seed = []
+
+def get_return(reward):
+    running_g = 0
+    gs = []
+
+    # Discounted return (backwards) - [::-1] will return an array in reverse
+    for R in reward[::-1]:
+        running_g = R + 0.97 * running_g
+        gs.insert(0, running_g)
+
+    return gs
+
+def get_reward(info):
+    return -1 * (info['x_position'] + 10)
 
 for seed in [1, 2, 3, 5, 8]:  # Fibonacci seeds
     # set seed
@@ -213,30 +189,35 @@ for seed in [1, 2, 3, 5, 8]:  # Fibonacci seeds
             # if the episode is terminated, if the episode is truncated and
             # additional info from the step
             obs, reward, terminated, truncated, info = wrapped_env.step(action)
+            reward = get_reward(info)
+            # print(reward) 
             agent.rewards.append(reward)
 
+            # print(info)
             # End the episode when either truncated or terminated is true
             #  - truncated: The episode duration reaches max number of timesteps
             #  - terminated: Any of the state space values is no longer finite.
             # done = terminated or truncated
             done = truncated
 
-        reward_over_episodes.append(wrapped_env.return_queue[-1])
+        returns = get_return(agent.rewards)
+
+        reward_over_episodes.append(returns)
         agent.update()
 
         if episode % 100 == 0:
-            avg_reward = float(np.mean(wrapped_env.return_queue))
+            avg_reward = float(np.mean(np.array(returns)))
             print("Episode:", episode, "Average Reward:", avg_reward)
-            print("max return", np.max(wrapped_env.return_queue))
-            print("min return", np.min(wrapped_env.return_queue))
-            print("std dev of return: ", np.var(wrapped_env.return_queue))
+            print("max return", np.max(np.array(returns)))
+            print("min return", np.min(np.array(returns)))
+            print("std dev of return: ", np.var(np.array(returns)))
 
         timestep_count.append(count)
 
     rewards_over_seeds.append(reward_over_episodes)
     timestep_over_seeds.append(timestep_count)
 
-    torch.save(agent.net.state_dict(), 'hopper.pth')
+    torch.save(agent.net.state_dict(), 'hopper_setpoint.pth')
 
 
 
