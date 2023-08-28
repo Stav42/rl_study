@@ -97,7 +97,7 @@ class VANILLA_POLICY_GRADIENT:
 
         self.pol_net = Policy_Network(obs_space_dims, action_space_dims)
         self.val_net = Value_Network(obs_space_dims)
-        existing = 0
+        existing = 1
         if existing:
             self.pol_net.load_state_dict(torch.load('hopper_VPGpol_setpt_rew20.pth'))
             self.val_net.load_state_dict(torch.load('hopper_VPGval_setpt_rew20.pth'))
@@ -169,8 +169,8 @@ class VANILLA_POLICY_GRADIENT:
 
 
 # Create and wrap the environment
-# env = gym.make("Hopper-v4", render_mode="human", exclude_current_positions_from_observation=False, forward_reward_weight=0)
-env = gym.make("Hopper-v4", exclude_current_positions_from_observation=False, forward_reward_weight = 0)
+env = gym.make("Hopper-v4", render_mode="human", exclude_current_positions_from_observation=False, forward_reward_weight=0)
+# env = gym.make("Hopper-v4", exclude_current_positions_from_observation=False, forward_reward_weight = 0)
 
 wrapped_env = gym.wrappers.RecordEpisodeStatistics(env, 50)  # Records episode-reward
 
