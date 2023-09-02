@@ -1,23 +1,33 @@
 from __future__ import annotations
 
 import random
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
+# import pandas as pd
 import seaborn as sns
 import torch
-import time
 import torch.nn as nn
 from torch.distributions.normal import Normal
 
 import gymnasium as gym
+print(f"PyTorch version: {torch.__version__}")
+
+# Check PyTorch has access to MPS (Metal Performance Shader, Apple's GPU architecture)
+print(f"Is MPS (Metal Performance Shader) built? {torch.backends.mps.is_built()}")
+print(f"Is MPS available? {torch.backends.mps.is_available()}")
+
+# Set the device      
+device = "mps" if torch.backends.mps.is_available() else "cpu"
+print(f"Using device: {device}")
 
 
 plt.rcParams["figure.figsize"] = (10, 5)
 
 mse_loss = nn.MSELoss()
 
+mps_device = torch.device("mps")
 
 class Policy_Network(nn.Module):
     """Parametrized Policy Network."""
@@ -96,9 +106,9 @@ class VANILLA_POLICY_GRADIENT:
         self.values = []
         self.returns = []
 
-        self.pol_net = Policy_Network(obs_space_dims, action_space_dims)
-        self.val_net = Value_Network(obs_space_dims)
-        existing = 1
+        self.pol_net = Policy_Network(obs_space_dims, action_space_dims).to(mps_device)
+        self.val_net = Value_Network(obs_space_dims).to(mps_device)
+        existing = 0
         if existing:
             self.pol_net.load_state_dict(torch.load('hopper_VPGpol_setpt_rew20.pth'))
             self.val_net.load_state_dict(torch.load('hopper_VPGval_setpt_rew20.pth'))
@@ -107,7 +117,7 @@ class VANILLA_POLICY_GRADIENT:
 
     def sample_action(self, state: np.ndarray) -> float:
 
-        state = torch.tensor(np.array([state]))
+        state = torch.tensor(np.array([state]), dtype=torch.float32).to(device)
         action_means, action_stddevs = self.pol_net(state)
 
         # create a normal distribution from the predicted
@@ -115,8 +125,8 @@ class VANILLA_POLICY_GRADIENT:
         distrib = Normal(action_means[0] + self.eps, action_stddevs[0] + self.eps)
         action = distrib.sample()
         prob = distrib.log_prob(action)
-
-        action = action.numpy()
+        
+        action = action.cpu().numpy()
 
         self.probs.append(prob)
 
@@ -132,7 +142,7 @@ class VANILLA_POLICY_GRADIENT:
             running_g = R + self.gamma * running_g
             gs.insert(0, running_g)
 
-        deltas = torch.tensor(gs) - torch.tensor(self.values)
+        deltas = torch.tensor(gs, dtype=torch.float32).to(device) - torch.tensor(self.values, dtype=torch.float32).to(device)
 
         loss = 0
         # minimize -1 * prob * reward obtained
@@ -149,7 +159,6 @@ class VANILLA_POLICY_GRADIENT:
         loss.backward()
         self.pol_optimizer.step()
         print("Time it took to optimize the policy: ", time.time() - start_time)
-
         # for name, param in self.pol_net.named_parameters():
         #     if param.grad is not None:
         #         print(name, "Policy gradient:", param.grad)
@@ -227,7 +236,7 @@ for seed in [1, 2, 3, 5, 8]:  # Fibonacci seeds
         count = 0
         for t in range(timesteps):
             action = agent.sample_action(obs)
-            value = agent.val_net(torch.tensor(np.array([obs]), dtype=torch.float32))
+            value = agent.val_net(torch.tensor(np.array([obs]), dtype=torch.float32).to(device))
             count+=1
 
             agent.values.append(value)
